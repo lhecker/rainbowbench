@@ -237,6 +237,7 @@ int main(int argc, const char* argv[]) {
     );
 
     size_t kcgs = 0;
+	size_t frames = 0; // number of frames per second of the last second
     size_t frame = 0;
     auto reference = std::chrono::steady_clock::now();
     std::string output;
@@ -260,9 +261,11 @@ int main(int argc, const char* argv[]) {
             "\x1b[39;49m" // Foreground/Background color reset (part of SGR)
             "\x1b[H"      // Cursor Position (CUP)
         );
+		output.append(std::to_string(frames));
+		output.append(" fps | ");
         output.append(std::to_string(kcgs));
         output.append(
-            "kcg/s"
+            " kcg/s"
             "\033[?2026l" // end synchronized update
         );
 
@@ -274,6 +277,7 @@ int main(int argc, const char* argv[]) {
         if (duration >= std::chrono::seconds(1)) {
             kcgs = static_cast<size_t>(dx * dy * frame / 1000.0 / std::chrono::duration<double>(duration).count() + 0.5);
             reference = now;
+			frames = frame;
             frame = 0;
         }
     }
