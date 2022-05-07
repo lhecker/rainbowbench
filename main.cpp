@@ -20,6 +20,7 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 static void write_console(const std::string_view& s) noexcept {
@@ -84,7 +85,7 @@ static std::string read_next_vt() noexcept {
     }
 }
 
-static void get_window_size(size_t& dx, size_t& dy) {
+static std::tuple<size_t, size_t> get_window_size() {
     write_console(
         "\x1b[9999;9999H" // Cursor Position (CUP)
         "\x1b[6n"         // Report Cursor Position (CPR) using Device Status Report (DSR) 6
@@ -104,21 +105,23 @@ static void get_window_size(size_t& dx, size_t& dy) {
             abort();
         }
 
-        static constexpr auto parse = [](const char* beg, const char* end, size_t& out) {
+        static constexpr auto parse = [](const char* beg, const char* end) -> size_t {
+			auto out = size_t {};
             if (std::from_chars(beg, end, out, 10).ec != std::errc()) {
                 abort();
             }
+			return out;
         };
-        parse(beg, mid, dy);
-        parse(mid + 1, end, dx);
 
-        dx = std::clamp<size_t>(dx, 1, 1024);
-        dy = std::clamp<size_t>(dy, 1, 1024);
-        break;
+        auto const dx = std::clamp<size_t>(parse(mid + 1, end), 1, 1024);
+        auto const dy = std::clamp<size_t>(parse(beg, mid), 1, 1024);
+		return {dx, dy};
     }
 }
 
-static void hue_to_rgb(double color_index, double num_colors, uint8_t& r, uint8_t& g, uint8_t& b) {
+using RGBColor = std::tuple<uint8_t, uint8_t, uint8_t>;
+
+static RGBColor hue_to_rgb(double color_index, double num_colors) {
     // https://en.wikipedia.org/wiki/HSL_and_HSV#HSV_to_RGB
     const auto h = color_index / num_colors * 360.0;
     const auto hh = static_cast<int>(h / 60.0);
@@ -126,36 +129,19 @@ static void hue_to_rgb(double color_index, double num_colors, uint8_t& r, uint8_
 
     switch (hh % 6) {
     case 0:
-        r = 255;
-        g = v;
-        b = 0;
-        break;
+		return {255, v, 0};
     case 1:
-        r = 255 - v;
-        g = 255;
-        b = 0;
-        break;
+		return {255 - v, 255, 0};
     case 2:
-        r = 0;
-        g = 255;
-        b = v;
-        break;
+		return {0, 255, v};
     case 3:
-        r = 0;
-        g = 255 - v;
-        b = 255;
-        break;
+		return {0, 255 - v, 255};
     case 4:
-        r = v;
-        g = 0;
-        b = 255;
-        break;
+		return {v, 0, 255};
     case 5:
-        r = 255;
-        g = 0;
-        b = 255 - v;
-        break;
+		return {255, 0, 255 - v};
     }
+	std::abort();
 }
 
 static bool exitFlag = false;
@@ -207,26 +193,18 @@ int main(int argc, const char* argv[]) {
         num_colors = std::clamp<size_t>(num_colors, 1, total_rainbow_colors);
     }
 
-    size_t dx = 0;
-    size_t dy = 0;
-    get_window_size(dx, dy);
+    auto const [dx, dy] = get_window_size();
 
     std::string rainbow;
     std::vector<size_t> rainbow_indices;
     {
         char buffer[64];
         // Colors of current iteration
-        uint8_t r = 255;
-        uint8_t g = 0;
-        uint8_t b = 0;
         // Colors of previous iteration
-        uint8_t rp;
-        uint8_t gp;
-        uint8_t bp;
-        hue_to_rgb(num_colors - 1, num_colors, rp, gp, bp);
+        auto [rp, gp, bp] = hue_to_rgb(num_colors - 1, num_colors);
 
         for (size_t i = 0, count = num_colors + dx; i < count; ++i) {
-            hue_to_rgb(i, num_colors, r, g, b);
+            auto const [r, g, b] = hue_to_rgb(i, num_colors);
 
             // Using ▀ would be graphically more pleasing, but in this benchmark we want to
             // test rendering performance and DirectWrite, as used in Windows Terminal,
