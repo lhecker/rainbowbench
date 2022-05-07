@@ -275,9 +275,10 @@ int main(int argc, const char* argv[]) {
         const auto now = std::chrono::steady_clock::now();
         const auto duration = now - reference;
         if (duration >= std::chrono::seconds(1)) {
-            kcgs = static_cast<size_t>(dx * dy * frame / 1000.0 / std::chrono::duration<double>(duration).count() + 0.5);
-            reference = now;
-			frames = frame;
+			const auto durationCount = std::chrono::duration<double>(duration).count();
+			kcgs = static_cast<size_t>(dx * dy * frame / 1000.0 / durationCount + 0.5);
+			frames = static_cast<size_t>(frame / durationCount + 0.5);
+			reference = now;
             frame = 0;
         }
     }
