@@ -29,11 +29,6 @@ static void write_console(const std::string_view& s) noexcept {
 #endif
 }
 
-static void cleanup() {
-    // Start with a fresh line, show cursor again, disable Synchronized Output.
-    write_console("\n\033[?25h\033[?2026l");
-}
-
 static std::string read_next_vt() noexcept {
     std::string buffer;
     size_t state = 0;
@@ -162,10 +157,18 @@ static void hue_to_rgb(double color_index, double num_colors, uint8_t& r, uint8_
     }
 }
 
-static void signalHandler(int) {
-    cleanup();
-    exit(EXIT_SUCCESS);
+static bool exitFlag = false;
+
+#ifdef _WIN32
+BOOL WINAPI signalHandler(DWORD) {
+    exitFlag = true;
+    return TRUE;
 }
+#else
+static void signalHandler(int) {
+    exitFlag = true;
+}
+#endif
 
 int main(int argc, const char* argv[]) {
 #ifdef _WIN32
@@ -174,6 +177,7 @@ int main(int argc, const char* argv[]) {
         GetStdHandle(STD_OUTPUT_HANDLE),
         ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN
     );
+    SetConsoleCtrlHandler(signalHandler, TRUE);
 #else
     // Disable line buffering and automatic echo for stdin.
     // This allows us to call getchar() without blocking until the next newline.
@@ -248,15 +252,17 @@ int main(int argc, const char* argv[]) {
         }
     }
 
-    // DECTCEM hide cursor
-    write_console("\x1b[?25l");
+    write_console(
+        "\x1b[?1049h" // enable alternative screen buffer
+        "\x1b[?25l"   // DECTCEM hide cursor
+    );
 
     size_t kcgs = 0;
     size_t frame = 0;
     auto reference = std::chrono::steady_clock::now();
     std::string output;
 
-    for (size_t i = 0;; ++i) {
+    for (size_t i = 0; !exitFlag; ++i) {
         output.clear();
         output.append(
             "\033[?2026h" // begin synchronized update
@@ -292,4 +298,11 @@ int main(int argc, const char* argv[]) {
             frame = 0;
         }
     }
+
+    // Start with a fresh line, show cursor again, disable Synchronized Output.
+    write_console(
+        "\x1b[?2026l" // end synchronized update
+        "\x1b[?25h"   // DECTCEM show cursor
+        "\x1b[?1049l" // disable alternative screen buffer
+    );
 }
