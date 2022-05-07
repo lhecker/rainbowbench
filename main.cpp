@@ -45,7 +45,7 @@ static std::string read_next_vt() noexcept
         const auto ch = getchar();
         if (ch == EOF)
         {
-            return 0;
+            return "";
         }
 #endif
         buffer.push_back(static_cast<char>(ch));
