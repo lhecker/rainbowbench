@@ -10,6 +10,7 @@
 #include <io.h>
 #else
 #include <termios.h>
+#include <unistd.h>
 #endif
 
 #include <charconv>
@@ -28,8 +29,14 @@ static void write_console(const std::string_view& s) noexcept
 #ifdef _WIN32
     WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), s.data(), s.size(), nullptr, nullptr);
 #else
-    fwrite(s.data(), 1, s.size(), stdout);
+	write(STDOUT_FILENO, s.data(), s.size());
 #endif
+}
+
+static void cleanup()
+{
+	// Start with a fresh line, show cursor again, disable Synchronized Output.
+	write_console("\n\033[?25h\033[?2026l");
 }
 
 static std::string read_next_vt() noexcept
@@ -45,7 +52,7 @@ static std::string read_next_vt() noexcept
         const auto ch = getchar();
         if (ch == EOF)
         {
-            return 0;
+            return "";
         }
 #endif
         buffer.push_back(static_cast<char>(ch));
@@ -184,6 +191,12 @@ static void hue_to_rgb(double color_index, double num_colors, uint8_t& r, uint8_
     }
 }
 
+static void signalHandler(int)
+{
+	cleanup();
+	exit(EXIT_SUCCESS);
+}
+
 int main(int argc, const char* argv[])
 {
 #ifdef _WIN32
@@ -198,6 +211,7 @@ int main(int argc, const char* argv[])
     tcsetattr(0, TCSANOW, &term);
     // Disable stdout buffering, allowing us to drop the fflush().
     setvbuf(stdout, nullptr, _IONBF, 0);
+	signal(SIGINT, signalHandler);
 #endif
 
     if (argc != 1 && argc != 2)
