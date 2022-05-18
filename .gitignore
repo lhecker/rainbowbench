@@ -4,4 +4,5 @@
 !.gitignore
 !CMakeLists.txt
 !LICENSE
+!README.md
 !main.cpp
