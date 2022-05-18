@@ -3,4 +3,5 @@
 !.editorconfig
 !.gitignore
 !CMakeLists.txt
+!LICENSE
 !main.cpp
