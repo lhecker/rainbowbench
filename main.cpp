@@ -12,6 +12,7 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cmath>
