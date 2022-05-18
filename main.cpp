@@ -232,24 +232,47 @@ int main(int argc, const char* argv[]) {
     }
 
     write_console(
-        "\x1b[?1049h" // enable alternative screen buffer
+        "\x1b[?1049h" // enable alternative screen stats
         "\x1b[?25l"   // DECTCEM hide cursor
     );
 
+    const size_t area = dx * dy;
     size_t kcgs = 0;
     size_t frames = 0; // number of frames per second of the last second
+    size_t glyphs = 0;
     size_t frame = 0;
     auto reference = std::chrono::steady_clock::now();
     std::string output;
+    std::string stats;
 
     for (size_t i = 0; !exitFlag; ++i) {
         output.clear();
+        stats.clear();
+
+        stats.append(std::to_string(frames));
+        stats.append(" fps | ");
+        stats.append(std::to_string(kcgs));
+        stats.append(" kcg/s");
+        if (stats.size() > dx) {
+            stats.resize(dx);
+        }
+
         output.append(
             "\033[?2026h" // begin synchronized update
             "\x1b[H"      // Cursor Position (CUP)
+            "\x1b[39;49m" // Foreground/Background color reset (part of SGR)
         );
+        output.append(stats);
 
-        for (size_t y = 0; y < dy - 1; ++y) {
+        {
+            const auto idx = (i + stats.size()) % num_colors;
+            const auto beg = rainbow_indices[idx];
+            const auto end = rainbow_indices[idx + dx - stats.size()];
+            const auto count = end - beg;
+            output.append(rainbow.data() + beg, count);
+        }
+
+        for (size_t y = 1; y < dy; ++y) {
             const auto idx = (i + y * 2) % num_colors;
             const auto beg = rainbow_indices[idx];
             const auto end = rainbow_indices[idx + dx];
@@ -258,16 +281,10 @@ int main(int argc, const char* argv[]) {
         }
 
         output.append(
-            "\x1b[39;49m" // Foreground/Background color reset (part of SGR)
-        );
-        output.append(std::to_string(frames));
-        output.append(" fps | ");
-        output.append(std::to_string(kcgs));
-        output.append(
-            " kcg/s"
             "\033[?2026l" // end synchronized update
         );
 
+        glyphs += area - stats.size();
         frame++;
         write_console(output);
 
@@ -275,9 +292,10 @@ int main(int argc, const char* argv[]) {
         const auto duration = now - reference;
         if (duration >= std::chrono::seconds(1)) {
             const auto durationCount = std::chrono::duration<double>(duration).count();
-            kcgs = static_cast<size_t>(dx * (dy - 1) * frame / 1000.0 / durationCount + 0.5);
+            kcgs = static_cast<size_t>(glyphs / 1000.0 / durationCount + 0.5);
             frames = static_cast<size_t>(frame / durationCount + 0.5);
             reference = now;
+            glyphs = 0;
             frame = 0;
         }
     }
@@ -286,6 +304,6 @@ int main(int argc, const char* argv[]) {
     write_console(
         "\x1b[?2026l" // end synchronized update
         "\x1b[?25h"   // DECTCEM show cursor
-        "\x1b[?1049l" // disable alternative screen buffer
+        "\x1b[?1049l" // disable alternative screen stats
     );
 }
