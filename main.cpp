@@ -249,7 +249,7 @@ int main(int argc, const char* argv[]) {
             "\x1b[H"      // Cursor Position (CUP)
         );
 
-        for (size_t y = 0; y < dy; ++y) {
+        for (size_t y = 0; y < dy - 1; ++y) {
             const auto idx = (i + y * 2) % num_colors;
             const auto beg = rainbow_indices[idx];
             const auto end = rainbow_indices[idx + dx];
@@ -259,7 +259,6 @@ int main(int argc, const char* argv[]) {
 
         output.append(
             "\x1b[39;49m" // Foreground/Background color reset (part of SGR)
-            "\x1b[H"      // Cursor Position (CUP)
         );
 		output.append(std::to_string(frames));
 		output.append(" fps | ");
@@ -276,7 +275,7 @@ int main(int argc, const char* argv[]) {
         const auto duration = now - reference;
         if (duration >= std::chrono::seconds(1)) {
 			const auto durationCount = std::chrono::duration<double>(duration).count();
-			kcgs = static_cast<size_t>(dx * dy * frame / 1000.0 / durationCount + 0.5);
+			kcgs = static_cast<size_t>(dx * (dy - 1) * frame / 1000.0 / durationCount + 0.5);
 			frames = static_cast<size_t>(frame / durationCount + 0.5);
 			reference = now;
             frame = 0;
