@@ -106,16 +106,16 @@ static std::tuple<size_t, size_t> get_window_size() {
         }
 
         static constexpr auto parse = [](const char* beg, const char* end) -> size_t {
-			auto out = size_t {};
+            auto out = size_t{};
             if (std::from_chars(beg, end, out, 10).ec != std::errc()) {
                 abort();
             }
-			return out;
+            return out;
         };
 
-        auto const dx = std::clamp<size_t>(parse(mid + 1, end), 1, 1024);
-        auto const dy = std::clamp<size_t>(parse(beg, mid), 1, 1024);
-		return {dx, dy};
+        const auto dx = std::clamp<size_t>(parse(mid + 1, end), 1, 1024);
+        const auto dy = std::clamp<size_t>(parse(beg, mid), 1, 1024);
+        return {dx, dy};
     }
 }
 
@@ -129,19 +129,19 @@ static RGBColor hue_to_rgb(double color_index, double num_colors) {
 
     switch (hh % 6) {
     case 0:
-		return {255, v, 0};
+        return {255, v, 0};
     case 1:
-		return {255 - v, 255, 0};
+        return {255 - v, 255, 0};
     case 2:
-		return {0, 255, v};
+        return {0, 255, v};
     case 3:
-		return {0, 255 - v, 255};
+        return {0, 255 - v, 255};
     case 4:
-		return {v, 0, 255};
+        return {v, 0, 255};
     case 5:
-		return {255, 0, 255 - v};
+        return {255, 0, 255 - v};
     }
-	std::abort();
+    std::abort();
 }
 
 static bool exitFlag = false;
@@ -193,7 +193,7 @@ int main(int argc, const char* argv[]) {
         num_colors = std::clamp<size_t>(num_colors, 1, total_rainbow_colors);
     }
 
-    auto const [dx, dy] = get_window_size();
+    const auto [dx, dy] = get_window_size();
 
     std::string rainbow;
     std::vector<size_t> rainbow_indices;
@@ -204,7 +204,7 @@ int main(int argc, const char* argv[]) {
         auto [rp, gp, bp] = hue_to_rgb(num_colors - 1, num_colors);
 
         for (size_t i = 0, count = num_colors + dx; i < count; ++i) {
-            auto const [r, g, b] = hue_to_rgb(i, num_colors);
+            const auto [r, g, b] = hue_to_rgb(i, num_colors);
 
             // Using ▀ would be graphically more pleasing, but in this benchmark we want to
             // test rendering performance and DirectWrite, as used in Windows Terminal,
@@ -237,7 +237,7 @@ int main(int argc, const char* argv[]) {
     );
 
     size_t kcgs = 0;
-	size_t frames = 0; // number of frames per second of the last second
+    size_t frames = 0; // number of frames per second of the last second
     size_t frame = 0;
     auto reference = std::chrono::steady_clock::now();
     std::string output;
@@ -260,8 +260,8 @@ int main(int argc, const char* argv[]) {
         output.append(
             "\x1b[39;49m" // Foreground/Background color reset (part of SGR)
         );
-		output.append(std::to_string(frames));
-		output.append(" fps | ");
+        output.append(std::to_string(frames));
+        output.append(" fps | ");
         output.append(std::to_string(kcgs));
         output.append(
             " kcg/s"
@@ -274,10 +274,10 @@ int main(int argc, const char* argv[]) {
         const auto now = std::chrono::steady_clock::now();
         const auto duration = now - reference;
         if (duration >= std::chrono::seconds(1)) {
-			const auto durationCount = std::chrono::duration<double>(duration).count();
-			kcgs = static_cast<size_t>(dx * (dy - 1) * frame / 1000.0 / durationCount + 0.5);
-			frames = static_cast<size_t>(frame / durationCount + 0.5);
-			reference = now;
+            const auto durationCount = std::chrono::duration<double>(duration).count();
+            kcgs = static_cast<size_t>(dx * (dy - 1) * frame / 1000.0 / durationCount + 0.5);
+            frames = static_cast<size_t>(frame / durationCount + 0.5);
+            reference = now;
             frame = 0;
         }
     }
