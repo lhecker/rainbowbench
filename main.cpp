@@ -42,7 +42,7 @@ static std::string read_next_vt() noexcept {
 #else
         const auto ch = getchar();
         if (ch == EOF) {
-            return "";
+            return {};
         }
 #endif
         buffer.push_back(static_cast<char>(ch));
@@ -200,17 +200,15 @@ int main(int argc, const char* argv[]) {
     std::vector<size_t> rainbow_indices;
     {
         char buffer[64];
-        // Colors of current iteration
-        // Colors of previous iteration
         auto [rp, gp, bp] = hue_to_rgb(num_colors - 1, num_colors);
 
         for (size_t i = 0, count = num_colors + dx; i < count; ++i) {
             const auto [r, g, b] = hue_to_rgb(i, num_colors);
 
-            // Using ▀ would be graphically more pleasing, but in this benchmark we want to
-            // test rendering performance and DirectWrite, as used in Windows Terminal,
-            // has a very poor font-fallback performance. If we were to use ▀, we'd
-            // primarily test how DirectWrite's instead of Terminal's performance.
+            // Using ▀ would be graphically more pleasing, but in this benchmark
+            // we want to test rendering performance and DirectWrite, as used
+            // in Windows Terminal, has a very poor font-fallback performance.
+            // If we were to use ▀, we'd primarily test how fast DirectWrite's is.
             const auto length = snprintf(
                 buffer,
                 std::ssize(buffer),
@@ -239,7 +237,7 @@ int main(int argc, const char* argv[]) {
 
     const size_t area = dx * dy;
     size_t kcgs = 0;
-    size_t frames = 0; // number of frames per second of the last second
+    size_t frames = 0;
     size_t glyphs = 0;
     size_t frame = 0;
     auto reference = std::chrono::steady_clock::now();
