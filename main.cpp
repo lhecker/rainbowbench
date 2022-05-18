@@ -232,7 +232,7 @@ int main(int argc, const char* argv[]) {
     }
 
     write_console(
-        "\x1b[?1049h" // enable alternative screen stats
+        "\x1b[?1049h" // enable alternative screen buffer
         "\x1b[?25l"   // DECTCEM hide cursor
     );
 
@@ -304,6 +304,6 @@ int main(int argc, const char* argv[]) {
     write_console(
         "\x1b[?2026l" // end synchronized update
         "\x1b[?25h"   // DECTCEM show cursor
-        "\x1b[?1049l" // disable alternative screen stats
+        "\x1b[?1049l" // disable alternative screen buffer
     );
 }
