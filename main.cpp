@@ -18,17 +18,22 @@
 #include <cmath>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <vector>
 
+#ifndef _WIN32
+static int consoleOutput = STDOUT_FILENO;
+#endif
+
 static void write_console(const std::string_view& s) noexcept {
 #ifdef _WIN32
     WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), s.data(), s.size(), nullptr, nullptr);
 #else
-    write(STDOUT_FILENO, s.data(), s.size());
+    write(consoleOutput, s.data(), s.size());
 #endif
 }
 
@@ -176,6 +181,12 @@ int main(int argc, const char* argv[]) {
     // Disable stdout buffering, allowing us to drop the fflush().
     setvbuf(stdout, nullptr, _IONBF, 0);
     signal(SIGINT, signalHandler);
+
+    // Allows optionally using an alternative route to write to the terminal, using a non-standard file descriptor.
+    // At least Contour Terminal advertises this environment variable on supported platform for improved performance. 
+    if (auto const fastPipeEnv = getenv("STDOUT_FASTPIPE"); fastPipeEnv && *fastPipeEnv && isatty(consoleOutput)) {
+        consoleOutput = std::stoi(fastPipeEnv);
+    }
 #endif
 
     if (argc != 1 && argc != 2) {
