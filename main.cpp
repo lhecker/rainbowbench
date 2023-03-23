@@ -5,129 +5,52 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
-#include <conio.h>
-#include <fcntl.h>
 #else
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 #endif
 
 #include <algorithm>
-#include <charconv>
+#include <atomic>
 #include <chrono>
+#include <cinttypes>
 #include <cmath>
 #include <csignal>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <string>
 #include <string_view>
 #include <tuple>
 #include <vector>
 
-#ifndef _WIN32
-static int consoleOutput = STDOUT_FILENO;
+enum SignalState : uint8_t {
+    SignalState_Sigint = 0x1,
+    SignalState_Sigwinch = 0x2,
+};
+
+enum ColorMode : uint8_t {
+    ColorMode_All = 0,
+    ColorMode_Foreground = 1,
+    ColorMode_Background = 2,
+};
+
+#ifdef _WIN32
+static const HANDLE consoleHandles[2]{
+    GetStdHandle(STD_INPUT_HANDLE),
+    GetStdHandle(STD_OUTPUT_HANDLE),
+};
 #endif
+
+static std::atomic<uint8_t> signal_state{SignalState_Sigwinch};
 
 static void write_console(const std::string_view& s) noexcept {
 #ifdef _WIN32
-    WriteConsoleA(GetStdHandle(STD_OUTPUT_HANDLE), s.data(), s.size(), nullptr, nullptr);
+    WriteConsoleA(consoleHandles[1], s.data(), s.size(), nullptr, nullptr);
 #else
-    write(consoleOutput, s.data(), s.size());
+    write(STDOUT_FILENO, s.data(), s.size());
 #endif
 }
 
-static std::string read_next_vt() noexcept {
-    std::string buffer;
-    size_t state = 0;
-
-    for (;;) {
-#ifdef _WIN32
-        const auto ch = _getch_nolock();
-#else
-        const auto ch = getchar();
-        if (ch == EOF) {
-            return {};
-        }
-#endif
-        buffer.push_back(static_cast<char>(ch));
-
-        switch (state) {
-        case 0: // Fe Escape sequence
-            if (ch == 0x1B) {
-                state++; // ESC
-            }
-            break;
-        case 1: // Control Sequence Introducer
-            if (ch == 0x5B) {
-                state++; // [
-            } else {
-                buffer.clear();
-                state = 0;
-            }
-            break;
-        case 2: // parameter bytes in the range 0x30–0x3F
-            if (ch >= 0x30 && ch <= 0x3F) {
-                break;
-            } else {
-                state++;
-            }
-        case 3: // intermediate bytes in the range 0x20–0x2F
-            if (ch >= 0x20 && ch <= 0x2F) {
-                break;
-            } else {
-                state++;
-            }
-        case 4: // final byte in the range 0x40–0x7E
-            if (ch >= 0x40 && ch <= 0x7E) {
-                return buffer;
-            } else {
-                buffer.clear();
-                state = 0;
-            }
-        default:
-            break;
-        }
-    }
-}
-
-static std::tuple<size_t, size_t> get_window_size() {
-    write_console(
-        "\x1b[9999;9999H" // Cursor Position (CUP)
-        "\x1b[6n"         // Report Cursor Position (CPR) using Device Status Report (DSR) 6
-    );
-
-    for (;;) {
-        const auto seq = read_next_vt();
-        if (seq.size() <= 3 || seq.back() != 'R') {
-            continue;
-        }
-
-        const auto count = seq.size() - 3;
-        const auto beg = seq.data() + 2;
-        const auto end = beg + count;
-        const auto mid = std::find(beg, end, ';');
-        if (!mid) {
-            abort();
-        }
-
-        static constexpr auto parse = [](const char* beg, const char* end) -> size_t {
-            auto out = size_t{};
-            if (std::from_chars(beg, end, out, 10).ec != std::errc()) {
-                abort();
-            }
-            return out;
-        };
-
-        const auto dx = std::clamp<size_t>(parse(mid + 1, end), 1, 1024);
-        const auto dy = std::clamp<size_t>(parse(beg, mid), 1, 1024);
-        return {dx, dy};
-    }
-}
-
-using RGBColor = std::tuple<uint8_t, uint8_t, uint8_t>;
-
-static RGBColor hue_to_rgb(double color_index, double num_colors) {
+static std::tuple<uint8_t, uint8_t, uint8_t> hue_to_rgb(float color_index, float num_colors) {
     // https://en.wikipedia.org/wiki/HSL_and_HSV#HSV_to_RGB
     const auto h = color_index / num_colors * 360.0;
     const auto hh = static_cast<int>(h / 60.0);
@@ -146,92 +69,95 @@ static RGBColor hue_to_rgb(double color_index, double num_colors) {
         return {v, 0, 255};
     case 5:
         return {255, 0, 255 - v};
+    default:
+        std::terminate();
     }
-    std::abort();
 }
-
-static bool exitFlag = false;
 
 #ifdef _WIN32
 BOOL WINAPI signalHandler(DWORD) {
-    exitFlag = true;
+    signal_state.fetch_or(SignalState_Sigint, std::memory_order_relaxed);
     return TRUE;
 }
 #else
-static void signalHandler(int) {
-    exitFlag = true;
+static void signalHandler(int sig) {
+    switch (sig) {
+    case SIGWINCH:
+        signal_state.fetch_or(SignalState_Sigwinch, std::memory_order_relaxed);
+        break;
+    default:
+        signal_state.fetch_or(SignalState_Sigint, std::memory_order_relaxed);
+        break;
+    }
 }
 #endif
 
 int main(int argc, const char* argv[]) {
-#ifdef _WIN32
-    SetConsoleCP(CP_UTF8);
-    SetConsoleMode(
-        GetStdHandle(STD_OUTPUT_HANDLE),
-        ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN
-    );
-    SetConsoleCtrlHandler(signalHandler, TRUE);
-#else
-    // Disable line buffering and automatic echo for stdin.
-    // This allows us to call getchar() without blocking until the next newline.
-    termios term;
-    tcgetattr(0, &term);
-    term.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(0, TCSANOW, &term);
-    // Disable stdout buffering, allowing us to drop the fflush().
-    setvbuf(stdout, nullptr, _IONBF, 0);
-    signal(SIGINT, signalHandler);
-
-    // Allows optionally using an alternative route to write to the terminal, using a non-standard file descriptor.
-    // At least Contour Terminal advertises this environment variable on supported platform for improved performance. 
-    if (auto const fastPipeEnv = getenv("STDOUT_FASTPIPE"); fastPipeEnv && *fastPipeEnv && isatty(consoleOutput)) {
-        consoleOutput = std::stoi(fastPipeEnv);
-    }
-#endif
-
-    if (argc != 1 && argc != 2) {
-        fprintf(stderr, "usage: rainbowbench <num_colors>\n");
+    if (argc < 1 || argc > 3) {
+        fprintf(stderr, "usage: rainbowbench [-fg] [-bg] <num_colors>\n");
         return 1;
     }
 
     // HSV offers at most 1530 distinct colors in 8-bit RGB
     static constexpr size_t total_rainbow_colors = 1530;
     size_t num_colors = total_rainbow_colors;
-    if (argc == 2) {
-        if (std::from_chars(argv[1], argv[1] + strlen(argv[1]), num_colors).ec != std::errc()) {
-            fprintf(stderr, "invalid num_colors\n");
-            return 1;
+    size_t argv_index = 1;
+    ColorMode color_mode = ColorMode_All;
+
+    if (argc > argv_index) {
+        if (strcmp(argv[argv_index], "-fg") == 0) {
+            color_mode = ColorMode_Foreground;
+            argv_index++;
+        } else if (strcmp(argv[argv_index], "-bg") == 0) {
+            color_mode = ColorMode_Background;
+            argv_index++;
         }
-        num_colors = std::clamp<size_t>(num_colors, 1, total_rainbow_colors);
     }
 
-    const auto [dx, dy] = get_window_size();
+    if (argc > argv_index) {
+        char* endptr;
+        num_colors = strtoumax(argv[argv_index], &endptr, 10);
+        num_colors = std::clamp<size_t>(num_colors, 1, total_rainbow_colors);
+        argv_index++;
+    }
 
+    size_t dx = 0;
+    size_t dy = 0;
+    size_t area = 0;
     std::string rainbow;
     std::vector<size_t> rainbow_indices;
-    {
+
+    const auto rebuild_rainbow = [&](int x, int y) {
+        dx = x;
+        dy = y;
+        area = x * y;
+
         char buffer[64];
         auto [rp, gp, bp] = hue_to_rgb(num_colors - 1, num_colors);
 
         for (size_t i = 0, count = num_colors + dx; i < count; ++i) {
             const auto [r, g, b] = hue_to_rgb(i, num_colors);
+            const auto ch = static_cast<char>('A' + i % ('Z' - 'A' + 1));
 
             // Using ▀ would be graphically more pleasing, but in this benchmark
             // we want to test rendering performance and DirectWrite, as used
             // in Windows Terminal, has a very poor font-fallback performance.
-            // If we were to use ▀, we'd primarily test how fast DirectWrite's is.
-            const auto length = snprintf(
-                buffer,
-                std::ssize(buffer),
-                "\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm%c",
-                rp,
-                gp,
-                bp,
-                r,
-                g,
-                b,
-                static_cast<char>('A' + i % ('Z' - 'A' + 1))
-            );
+            // If we were to use ▀, we'd primarily test how fast DirectWrite is.
+            int length = 0;
+            switch (color_mode) {
+            case ColorMode_All:
+                length = snprintf(buffer, std::ssize(buffer), "\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm%c", rp, gp, bp, r, g, b, ch);
+                break;
+            case ColorMode_Foreground:
+                length = snprintf(buffer, std::ssize(buffer), "\x1b[38;2;%d;%d;%dm%c", rp, gp, bp, ch);
+                break;
+            case ColorMode_Background:
+                length = snprintf(buffer, std::ssize(buffer), "\x1b[48;2;%d;%d;%dm%c", r, g, b, ch);
+                break;
+            default:
+                break;
+            }
+
             rainbow_indices.push_back(rainbow.size());
             rainbow.append(buffer, length);
 
@@ -239,14 +165,53 @@ int main(int argc, const char* argv[]) {
             gp = g;
             bp = b;
         }
+    };
+
+#ifdef _WIN32
+    const auto previousCP = GetConsoleCP();
+    SetConsoleCP(CP_UTF8);
+
+    DWORD previousModes[2]{};
+    for (size_t i = 0; i < 2; ++i) {
+        GetConsoleMode(consoleHandles[i], &previousModes[i]);
+        SetConsoleMode(consoleHandles[i], previousModes[i] | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
     }
+
+    SetConsoleCtrlHandler(signalHandler, TRUE);
+
+    CreateThread(
+        nullptr,
+        0,
+        [](LPVOID lpParameter) noexcept -> DWORD {
+            INPUT_RECORD records[16];
+            for (;;) {
+                DWORD read = 0;
+                if (!ReadConsoleInputW(consoleHandles[0], &records[0], 16, &read)) {
+                    break;
+                }
+
+                for (DWORD i = 0; i < read; ++i) {
+                    if (records[i].EventType == WINDOW_BUFFER_SIZE_EVENT) {
+                        signal_state.fetch_or(SignalState_Sigwinch, std::memory_order_relaxed);
+                    }
+                }
+            }
+            return 0;
+        },
+        nullptr,
+        0,
+        nullptr
+    );
+#else
+    signal(SIGINT, signalHandler);
+    signal(SIGWINCH, signalHandler);
+#endif
 
     write_console(
         "\x1b[?1049h" // enable alternative screen buffer
         "\x1b[?25l"   // DECTCEM hide cursor
     );
 
-    const size_t area = dx * dy;
     size_t kcgs = 0;
     size_t frames = 0;
     size_t glyphs = 0;
@@ -255,7 +220,23 @@ int main(int argc, const char* argv[]) {
     std::string output;
     std::string stats;
 
-    for (size_t i = 0; !exitFlag; ++i) {
+    for (size_t i = 0;; ++i) {
+        const auto state = signal_state.exchange(0, std::memory_order_relaxed);
+        if (state & SignalState_Sigint) {
+            break;
+        }
+        if (state & SignalState_Sigwinch) {
+#ifdef _WIN32
+            CONSOLE_SCREEN_BUFFER_INFO info{};
+            GetConsoleScreenBufferInfo(consoleHandles[1], &info);
+            rebuild_rainbow(info.dwSize.X, info.dwSize.Y);
+#else
+            winsize size{};
+            ioctl(STDOUT_FILENO, TIOCGWINSZ, &size);
+            rebuild_rainbow(size.ws_col, size.ws_row);
+#endif
+        }
+
         output.clear();
         stats.clear();
 
@@ -301,9 +282,9 @@ int main(int argc, const char* argv[]) {
         const auto now = std::chrono::steady_clock::now();
         const auto duration = now - reference;
         if (duration >= std::chrono::seconds(1)) {
-            const auto durationCount = std::chrono::duration<double>(duration).count();
-            kcgs = static_cast<size_t>(glyphs / 1000.0 / durationCount + 0.5);
-            frames = static_cast<size_t>(frame / durationCount + 0.5);
+            const auto durationCount = std::chrono::duration<float>(duration).count();
+            kcgs = static_cast<size_t>(glyphs / 1000.0f / durationCount + 0.5f);
+            frames = static_cast<size_t>(frame / durationCount + 0.5f);
             reference = now;
             glyphs = 0;
             frame = 0;
@@ -316,4 +297,12 @@ int main(int argc, const char* argv[]) {
         "\x1b[?25h"   // DECTCEM show cursor
         "\x1b[?1049l" // disable alternative screen buffer
     );
+
+#ifdef _WIN32
+    SetConsoleCP(previousCP);
+
+    for (size_t i = 0; i < 2; ++i) {
+        SetConsoleMode(consoleHandles[i], previousModes[i]);
+    }
+#endif
 }
