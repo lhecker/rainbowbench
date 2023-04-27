@@ -12,6 +12,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cinttypes>
@@ -31,6 +32,7 @@ enum ColorMode : uint8_t {
     ColorMode_All = 0,
     ColorMode_Foreground = 1,
     ColorMode_Background = 2,
+    ColorMode_None = 3,
 };
 
 #ifdef _WIN32
@@ -48,30 +50,6 @@ static void write_console(const std::string_view& s) noexcept {
 #else
     write(STDOUT_FILENO, s.data(), s.size());
 #endif
-}
-
-static std::tuple<uint8_t, uint8_t, uint8_t> hue_to_rgb(float color_index, float num_colors) {
-    // https://en.wikipedia.org/wiki/HSL_and_HSV#HSV_to_RGB
-    const auto h = color_index / num_colors * 360.0;
-    const auto hh = static_cast<int>(h / 60.0);
-    const auto v = static_cast<int>(256.0 / 60.0 * std::fmod(h, 60.0));
-
-    switch (hh % 6) {
-    case 0:
-        return {255, v, 0};
-    case 1:
-        return {255 - v, 255, 0};
-    case 2:
-        return {0, 255, v};
-    case 3:
-        return {0, 255 - v, 255};
-    case 4:
-        return {v, 0, 255};
-    case 5:
-        return {255, 0, 255 - v};
-    default:
-        std::terminate();
-    }
 }
 
 #ifdef _WIN32
@@ -92,6 +70,10 @@ static void signalHandler(int sig) {
 }
 #endif
 
+struct RGB {
+    uint8_t r, g, b;
+};
+
 int main(int argc, const char* argv[]) {
     if (argc < 1 || argc > 3) {
         fprintf(stderr, "usage: rainbowbench [-fg] [-bg] <num_colors>\n");
@@ -99,61 +81,131 @@ int main(int argc, const char* argv[]) {
     }
 
     // HSV offers at most 1530 distinct colors in 8-bit RGB
-    static constexpr size_t total_rainbow_colors = 1530;
-    size_t num_colors = total_rainbow_colors;
+    static constexpr size_t max_rainbow_colors = 1530;
+    size_t num_colors = max_rainbow_colors;
     size_t argv_index = 1;
     ColorMode color_mode = ColorMode_All;
+    char char_override[4];
+    size_t char_override_length = 0;
 
-    if (argc > argv_index) {
-        if (strcmp(argv[argv_index], "-fg") == 0) {
+    for (; argv_index < argc; ++argv_index) {
+        const auto arg = argv[argv_index];
+        if (strcmp(arg, "-fg") == 0) {
             color_mode = ColorMode_Foreground;
-            argv_index++;
-        } else if (strcmp(argv[argv_index], "-bg") == 0) {
+        } else if (strcmp(arg, "-bg") == 0) {
             color_mode = ColorMode_Background;
-            argv_index++;
+        } else if (strcmp(arg, "-ng") == 0) {
+            color_mode = ColorMode_None;
+        } else if (strncmp(arg, "-ch=", 4) == 0) {
+            char* endptr;
+            const auto codepoint = strtoul(arg + 4, &endptr, 16);
+            if (codepoint < 0x80) {
+                char_override[0] = static_cast<char>(codepoint);
+                char_override_length = 1;
+            } else if (codepoint < 0x800) {
+                char_override[0] = static_cast<char>((0xc0 | (codepoint >> 6)));
+                char_override[1] = static_cast<char>((0x80 | (codepoint & 0x3f)));
+                char_override_length = 2;
+            } else if (codepoint < 0x10000) {
+                char_override[0] = static_cast<char>((0xe0 | (codepoint >> 12)));
+                char_override[1] = static_cast<char>((0x80 | ((codepoint >> 6) & 0x3f)));
+                char_override[2] = static_cast<char>((0x80 | (codepoint & 0x3f)));
+                char_override_length = 3;
+            } else if (codepoint <= 0x110000) {
+                char_override[0] = static_cast<char>((0xf0 | (codepoint >> 18)));
+                char_override[1] = static_cast<char>((0x80 | ((codepoint >> 12) & 0x3f)));
+                char_override[2] = static_cast<char>((0x80 | ((codepoint >> 6) & 0x3f)));
+                char_override[3] = static_cast<char>((0x80 | (codepoint & 0x3f)));
+                char_override_length = 4;
+            }
+        } else {
+            char* endptr;
+            num_colors = strtoull(arg, &endptr, 10);
+            num_colors = std::clamp<size_t>(num_colors, 1, max_rainbow_colors);
         }
     }
 
-    if (argc > argv_index) {
-        char* endptr;
-        num_colors = strtoumax(argv[argv_index], &endptr, 10);
-        num_colors = std::clamp<size_t>(num_colors, 1, total_rainbow_colors);
-        argv_index++;
+    std::array<RGB, max_rainbow_colors> colors{};
+    for (size_t i = 0; i < num_colors; ++i) {
+        // https://en.wikipedia.org/wiki/HSL_and_HSV#HSV_to_RGB
+        const auto h = double(i) / double(num_colors) * 360.0;
+        const auto hh = static_cast<int>(h / 60.0);
+        const auto v = static_cast<int>(256.0 / 60.0 * std::fmod(h, 60.0));
+        uint8_t r, g, b;
+
+        switch (hh % 6) {
+        case 0:
+            r = 255;
+            g = v;
+            b = 0;
+            break;
+        case 1:
+            r = 255 - v;
+            g = 255;
+            b = 0;
+            break;
+        case 2:
+            r = 0;
+            g = 255;
+            b = v;
+            break;
+        case 3:
+            r = 0;
+            g = 255 - v;
+            b = 255;
+            break;
+        case 4:
+            r = v;
+            g = 0;
+            b = 255;
+            break;
+        case 5:
+            r = 255;
+            g = 0;
+            b = 255 - v;
+            break;
+        default:
+            std::terminate();
+        }
+
+        colors[i] = {r, g, b};
     }
 
-    size_t dx = 0;
-    size_t dy = 0;
-    size_t area = 0;
+    size_t screen_cols = 0;
+    size_t screen_rows = 0;
+    size_t screen_area = 0;
     std::string rainbow;
     std::vector<size_t> rainbow_indices;
 
-    const auto rebuild_rainbow = [&](int x, int y) {
-        dx = x;
-        dy = y;
-        area = x * y;
+    const auto rebuild_rainbow = [&]() {
+        screen_area = screen_cols * screen_rows;
 
+        const auto fg_offset = std::max<size_t>(1, (num_colors + 5) / 10);
         char buffer[64];
-        auto [rp, gp, bp] = hue_to_rgb(num_colors - 1, num_colors);
 
-        for (size_t i = 0, count = num_colors + dx; i < count; ++i) {
-            const auto [r, g, b] = hue_to_rgb(i, num_colors);
-            const auto ch = static_cast<char>('A' + i % ('Z' - 'A' + 1));
-
+        for (size_t i = 0, count = num_colors + screen_cols; i < count; ++i) {
             // Using ▀ would be graphically more pleasing, but in this benchmark
             // we want to test rendering performance and DirectWrite, as used
             // in Windows Terminal, has a very poor font-fallback performance.
             // If we were to use ▀, we'd primarily test how fast DirectWrite is.
             int length = 0;
             switch (color_mode) {
-            case ColorMode_All:
-                length = snprintf(buffer, std::ssize(buffer), "\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm%c", rp, gp, bp, r, g, b, ch);
+            case ColorMode_All: {
+                const auto bg = colors[i % num_colors];
+                const auto fg = colors[(i + fg_offset) % num_colors];
+                length = snprintf(buffer, std::ssize(buffer), "\x1b[48;2;%d;%d;%d;38;2;%d;%d;%dm", bg.r, bg.g, bg.b, fg.r, fg.g, fg.b);
                 break;
-            case ColorMode_Foreground:
-                length = snprintf(buffer, std::ssize(buffer), "\x1b[38;2;%d;%d;%dm%c", rp, gp, bp, ch);
+            }
+            case ColorMode_Foreground: {
+                const auto fg = colors[i % num_colors];
+                length = snprintf(buffer, std::ssize(buffer), "\x1b[38;2;%d;%d;%dm", fg.r, fg.g, fg.b);
                 break;
-            case ColorMode_Background:
-                length = snprintf(buffer, std::ssize(buffer), "\x1b[48;2;%d;%d;%dm%c", r, g, b, ch);
+            }
+            case ColorMode_Background: {
+                const auto bg = colors[i % num_colors];
+                length = snprintf(buffer, std::ssize(buffer), "\x1b[48;2;%d;%d;%dm", bg.r, bg.g, bg.b);
                 break;
+            }
             default:
                 break;
             }
@@ -161,15 +213,17 @@ int main(int argc, const char* argv[]) {
             rainbow_indices.push_back(rainbow.size());
             rainbow.append(buffer, length);
 
-            rp = r;
-            gp = g;
-            bp = b;
+            if (char_override_length) {
+                rainbow.append(&char_override[0], char_override_length);
+            } else {
+                rainbow.push_back(static_cast<char>('!' + i % 94));
+            }
         }
     };
 
 #ifdef _WIN32
-    const auto previousCP = GetConsoleCP();
-    SetConsoleCP(CP_UTF8);
+    const auto previousCP = GetConsoleOutputCP();
+    SetConsoleOutputCP(CP_UTF8);
 
     DWORD previousModes[2]{};
     for (size_t i = 0; i < 2; ++i) {
@@ -229,11 +283,15 @@ int main(int argc, const char* argv[]) {
 #ifdef _WIN32
             CONSOLE_SCREEN_BUFFER_INFO info{};
             GetConsoleScreenBufferInfo(consoleHandles[1], &info);
-            rebuild_rainbow(info.dwSize.X, info.dwSize.Y);
+            screen_cols = info.dwSize.X;
+            screen_rows = info.dwSize.Y;
+            rebuild_rainbow();
 #else
             winsize size{};
             ioctl(STDOUT_FILENO, TIOCGWINSZ, &size);
-            rebuild_rainbow(size.ws_col, size.ws_row);
+            screen_cols = size.ws_col;
+            screen_rows = size.ws_row;
+            rebuild_rainbow();
 #endif
         }
 
@@ -244,8 +302,8 @@ int main(int argc, const char* argv[]) {
         stats.append(" fps | ");
         stats.append(std::to_string(kcgs));
         stats.append(" kcg/s");
-        if (stats.size() > dx) {
-            stats.resize(dx);
+        if (stats.size() > screen_cols) {
+            stats.resize(screen_cols);
         }
 
         output.append(
@@ -258,15 +316,15 @@ int main(int argc, const char* argv[]) {
         {
             const auto idx = (i + stats.size()) % num_colors;
             const auto beg = rainbow_indices[idx];
-            const auto end = rainbow_indices[idx + dx - stats.size()];
+            const auto end = rainbow_indices[idx + screen_cols - stats.size()];
             const auto count = end - beg;
             output.append(rainbow.data() + beg, count);
         }
 
-        for (size_t y = 1; y < dy; ++y) {
+        for (size_t y = 1; y < screen_rows; ++y) {
             const auto idx = (i + y * 2) % num_colors;
             const auto beg = rainbow_indices[idx];
-            const auto end = rainbow_indices[idx + dx];
+            const auto end = rainbow_indices[idx + screen_cols];
             const auto count = end - beg;
             output.append(rainbow.data() + beg, count);
         }
@@ -275,7 +333,7 @@ int main(int argc, const char* argv[]) {
             "\033[?2026l" // end synchronized update
         );
 
-        glyphs += area - stats.size();
+        glyphs += screen_area - stats.size();
         frame++;
         write_console(output);
 
@@ -299,7 +357,7 @@ int main(int argc, const char* argv[]) {
     );
 
 #ifdef _WIN32
-    SetConsoleCP(previousCP);
+    SetConsoleOutputCP(previousCP);
 
     for (size_t i = 0; i < 2; ++i) {
         SetConsoleMode(consoleHandles[i], previousModes[i]);
