@@ -266,13 +266,14 @@ int main(int argc, const char* argv[]) {
         "\x1b[?25l"   // DECTCEM hide cursor
     );
 
-    size_t kcgs = 0;
-    size_t frames = 0;
-    size_t glyphs = 0;
+    float mbps = 0;
+    float frames = 0;
+    size_t written = 0;
     size_t frame = 0;
     auto reference = std::chrono::steady_clock::now();
     std::string output;
-    std::string stats;
+    char statsBuffer[128];
+    size_t statsLength = 0;
 
     for (size_t i = 0;; ++i) {
         const auto state = signal_state.exchange(0, std::memory_order_relaxed);
@@ -295,28 +296,21 @@ int main(int argc, const char* argv[]) {
 #endif
         }
 
+        statsLength = sprintf(&statsBuffer[0], "%.1f fps | %.3f MB/s", frames, mbps);
+        statsLength = std::min(statsLength, screen_cols);
+
         output.clear();
-        stats.clear();
-
-        stats.append(std::to_string(frames));
-        stats.append(" fps | ");
-        stats.append(std::to_string(kcgs));
-        stats.append(" kcg/s");
-        if (stats.size() > screen_cols) {
-            stats.resize(screen_cols);
-        }
-
         output.append(
             "\033[?2026h" // begin synchronized update
             "\x1b[H"      // Cursor Position (CUP)
             "\x1b[39;49m" // Foreground/Background color reset (part of SGR)
         );
-        output.append(stats);
+        output.append(&statsBuffer[0], statsLength);
 
         {
-            const auto idx = (i + stats.size()) % num_colors;
+            const auto idx = (i + statsLength) % num_colors;
             const auto beg = rainbow_indices[idx];
-            const auto end = rainbow_indices[idx + screen_cols - stats.size()];
+            const auto end = rainbow_indices[idx + screen_cols - statsLength];
             const auto count = end - beg;
             output.append(rainbow.data() + beg, count);
         }
@@ -333,18 +327,19 @@ int main(int argc, const char* argv[]) {
             "\033[?2026l" // end synchronized update
         );
 
-        glyphs += screen_area - stats.size();
-        frame++;
         write_console(output);
+
+        written += output.size();
+        frame++;
 
         const auto now = std::chrono::steady_clock::now();
         const auto duration = now - reference;
         if (duration >= std::chrono::seconds(1)) {
             const auto durationCount = std::chrono::duration<float>(duration).count();
-            kcgs = static_cast<size_t>(glyphs / 1000.0f / durationCount + 0.5f);
-            frames = static_cast<size_t>(frame / durationCount + 0.5f);
+            mbps = written / durationCount / 1e6f;
+            frames = frame / durationCount;
             reference = now;
-            glyphs = 0;
+            written = 0;
             frame = 0;
         }
     }
