@@ -75,9 +75,20 @@ struct RGB {
 };
 
 int main(int argc, const char* argv[]) {
-    if (argc < 1 || argc > 3) {
-        fprintf(stderr, "usage: rainbowbench [-fg] [-bg] <num_colors>\n");
-        return 1;
+    const auto help_request = argc >= 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0);
+    if (argc > 3 || help_request) {
+        fprintf(
+            stderr,
+            "Usage: rainbowbench [options] <num_colors>\n"
+            "\n"
+            "Options:\n"
+            "  -ng                No colors\n"
+            "  -fg                Foreground colors only\n"
+            "  -bg                Background colors only\n"
+            "  -ch=<codepoint>    Draw this specific codepoint only\n"
+            "\n"
+        );
+        return help_request ? 0 : 1;
     }
 
     // HSV offers at most 1530 distinct colors in 8-bit RGB
